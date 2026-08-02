@@ -116,7 +116,7 @@ def compute_R_per_cell(inpath_list):
 
 def report(trial_label, R_df, invalid_cells, multi_object_cells, output_file):
     R_df.to_feather(output_file)
-    print(f"\n>>> PSF size error trial: {trial_label}")
+    print(f"\n>>> PSF error trial: {trial_label}")
     print(f"Saved {len(R_df)} cell responses to {output_file}")
     print(f"Response statistics:")
     print(f"  Mean R: {R_df['R'].mean():.6f}")
@@ -133,29 +133,30 @@ def report(trial_label, R_df, invalid_cells, multi_object_cells, output_file):
     print(f"  Total objects across all cells: {R_df['n_objects'].sum():.0f}")
 
 
-## Each PSF size error trial (see Run.py --PSF_size_error) writes its MetaDetect
-##  catalogues to its own subfolder under 'catalogues/shapes': the baseline
-##  (PSF_size_error=0.0, no bias) lands directly in 'catalogues/shapes', while
-##  each nonzero value gets its own 'catalogues/shapes/PSF_size_error_<value>' folder.
+## Each PSF error trial (see Run.py --PSF_size_error / --PSF_beta_error) writes its
+##  MetaDetect catalogues to its own subfolder under 'catalogues/shapes': the baseline
+##  (both errors 0.0) lands directly in 'catalogues/shapes', a size-only trial goes to
+##  'PSF_size_error_<value>', a beta-only trial to 'PSF_beta_error_<value>', and a
+##  combined trial to 'PSF_size_error_<value>_PSF_beta_error_<value>' (matching the
+##  tag Run.py builds).
 shapes_dir = os.path.join(test_dir, RUNTAG, 'catalogues/shapes')
-trials = [('0.0000', shapes_dir)]
-for psf_dir in sorted(glob.glob(os.path.join(shapes_dir, 'PSF_size_error_*'))):
+trials = [('baseline', shapes_dir)]
+for psf_dir in sorted(glob.glob(os.path.join(shapes_dir, 'PSF_*error_*'))):
     if os.path.isdir(psf_dir):
-        label = os.path.basename(psf_dir)[len('PSF_size_error_'):]
-        trials.append((label, psf_dir))
+        trials.append((os.path.basename(psf_dir), psf_dir))
 
 n_done = 0
 for label, cata_dir in trials:
     inpath_list = glob.glob(os.path.join(cata_dir, '*.feather'))
     print(f">>> Number of catalogues found in {cata_dir}: {len(inpath_list)} (should be one)")
     if len(inpath_list) < 1:
-        print(f">>> No catalogues found for PSF size error {label}, skipping.")
+        print(f">>> No catalogues found for trial '{label}', skipping.")
         continue
 
-    if label == '0.0000':
+    if label == 'baseline':
         out_file = 'R_per_cell.feather'
     else:
-        out_file = f'R_per_cell_PSF_size_error_{label}.feather'
+        out_file = f'R_per_cell_{label}.feather'
     output_file = os.path.join(test_dir, RUNTAG, out_file)
 
     R_df, invalid_cells, multi_object_cells = compute_R_per_cell(inpath_list)
@@ -163,5 +164,5 @@ for label, cata_dir in trials:
     n_done += 1
 
 if n_done == 0:
-    print('Error: no catalogs found for any PSF size error trial. Aborting...')
+    print('Error: no catalogs found for any PSF error trial. Aborting...')
     sys.exit(1)
