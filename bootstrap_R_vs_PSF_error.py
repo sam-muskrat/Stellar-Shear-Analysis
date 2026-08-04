@@ -9,11 +9,34 @@
 ### Unlike I, this doesn't stop at a single point estimate + SE: for EVERY
 ### bootstrap iteration, it fits both a linear (R = a + b*x) and a quadratic
 ### (R = a + b*x + c*x^2) model relating shear response to PSF size error,
-### and does this for both x = fractional PSF FWHM size error and (optionally,
-### via -T/--psf-dir) x = delta-T/T_true. Each iteration's per-trial resampled
+### and does this for x = fractional PSF size error (--PSF_size_error in
+### Run.py), x = fractional PSF Moffat-beta error (--PSF_beta_error in
+### Run.py, whenever more than one distinct beta value is present in
+### input_dir - see calculate_R_from_cata.py for the combined naming
+### convention, PSF_size_error_<v>_PSF_beta_error_<v>), and (optionally, via
+### -T/--psf-dir) x = delta-T/T_true. Each iteration's per-trial resampled
 ### means and fit coefficients are written as one row of a wide-format
-### .feather file (one column per parameter/statistic) - L_plot_bootstrap_
-### R_vs_psf_error_fits.py reads this back to summarize and plot it.
+### .feather file (one column per parameter/statistic) - plot_R_vs_PSF_
+### size_error.py / plot_R_vs_PSF_beta_error.py read this back to summarize
+### and plot it.
+###
+### Since a folder can mix size-only, beta-only, and combined trials (all
+### sharing the same baseline, plain R_per_cell.feather), the baseline row
+### is identified by BOTH errors being 0 simultaneously - checking only one
+### would also match every trial that varies the other error while holding
+### this one at 0.
+###
+### Each axis is also fit using ONLY the trials that isolate it (one-factor-
+### at-a-time): the size (and T) fits use trials where beta error = 0
+### (size-only trials + baseline), and the beta fit uses trials where size
+### error = 0 (beta-only trials + baseline). Combined trials (both errors
+### nonzero, if present) isolate neither and are excluded from both. Fitting
+### an axis against every trial regardless of the other error would let the
+### other factor's effect masquerade as noise/misfit for this one - verified
+### in practice: naively fitting vs. size using every trial in a folder that
+### also has beta trials (all sitting at size error = 0) inflates chi^2 by
+### ~6 orders of magnitude, and can bias the fitted coefficients too, since
+### those points still pull on the least-squares solution.
 ###
 ### The per-trial weight used within EVERY iteration's fit is fixed up front
 ### as 1/se_R from an ordinary (non-paired) bootstrap of each trial's own
@@ -127,6 +150,18 @@ PSF_ERROR_RE = re.compile(r'PSF_size_error_([+-]?\d+\.\d+)')
 
 def psf_error_from_filename(path):
     match = PSF_ERROR_RE.search(os.path.basename(path))
+    return float(match.group(1)) if match else 0.0
+
+
+## Matches "PSF_beta_error_+0.0040" / "PSF_beta_error_-0.0040" in a filename -
+## see Run.py's --PSF_beta_error and calculate_R_from_cata.py's naming
+## convention. A file with no such tag is assigned PSF beta error = 0.0
+## (true for both the plain baseline and any size-only trial).
+PSF_BETA_RE = re.compile(r'PSF_beta_error_([+-]?\d+\.\d+)')
+
+
+def psf_beta_error_from_filename(path):
+    match = PSF_BETA_RE.search(os.path.basename(path))
     return float(match.group(1)) if match else 0.0
 
 
@@ -263,6 +298,7 @@ results = []
 trial_frames = {}
 for path in file_list:
     psf_error = psf_error_from_filename(path)
+    beta_error = psf_beta_error_from_filename(path)
 
     R_df = pd.read_feather(path)
 
@@ -310,6 +346,7 @@ for path in file_list:
     results.append({
         'file': os.path.basename(path),
         'psf_size_error': psf_error,
+        'psf_beta_error': beta_error,
         'mean_R': mean_R,
         'se_R': se,
         'n_cells': len(R_df),
@@ -318,37 +355,85 @@ for path in file_list:
     trial_frames[os.path.basename(path)] = R_df.set_index('cell_id')[['R', 'n_objects']]
 
     print(f"  {os.path.basename(path)}: PSF size error = {psf_error:+.4f}, "
+          f"PSF beta error = {beta_error:+.4f}, "
           f"mean R = {mean_R:.6f} +/- {se:.6f} ({len(R_df)} cells)")
 
 if len(results) < 2:
     print("Error: need at least 2 usable trials to fit anything. Aborting...")
     sys.exit(1)
 
-summary = pd.DataFrame(results).sort_values('psf_size_error').reset_index(drop=True)
+summary = pd.DataFrame(results).sort_values(
+    ['psf_size_error', 'psf_beta_error']).reset_index(drop=True)
 k = len(summary)
 file_order = summary['file'].tolist()
 x_fwhm = summary['psf_size_error'].to_numpy()
+x_beta = summary['psf_beta_error'].to_numpy()
+## Only fit vs. beta if the input folder actually contains more than one
+## distinct beta value (e.g. a size-only folder has beta=0 for every trial,
+## which would make a "fit" meaningless/degenerate).
+have_beta = len(np.unique(x_beta)) > 1
 ## Fixed per-trial weight for every iteration's fit below (np.polyfit squares
 ## its w internally, so passing 1/se gives the correct 1/se^2 inverse-
 ## variance weighting).
 fit_weight = 1 / summary['se_R'].to_numpy()
 
-print("\nSummary (sorted by PSF size error):")
+print("\nSummary (sorted by PSF size error, then beta error):")
 print(summary.to_string(index=False))
+if have_beta:
+    print(f">>> {len(np.unique(x_beta))} distinct PSF beta error value(s) found - "
+          f"will also fit vs. beta error")
+else:
+    print(">>> Only one distinct PSF beta error value found (probably 0.0) - "
+          "skipping the beta-error fit")
 
-if args.hyperbolic_fit and k < 3:
-    print("Error: --hyperbolic-fit needs at least 3 trials to fit its 3 free "
-          "parameters (A, B, C). Aborting...")
+## ++++++++++++++ Determine which trials isolate which axis (one-factor-at-a-time)
+##
+## Size (and T) fits use trials where beta = 0 (size-only trials + baseline);
+## the beta fit uses trials where size = 0 (beta-only trials + baseline). A
+## combined trial (both nonzero, if any exist) isolates neither and is used
+## by neither fit - see the module docstring for why mixing them in is wrong,
+## not just untidy.
+beta_zero_mask = np.isclose(x_beta, 0.0)
+size_zero_mask = np.isclose(x_fwhm, 0.0)
+
+size_subset_idx = np.where(beta_zero_mask)[0]
+beta_subset_idx = np.where(size_zero_mask)[0] if have_beta else np.array([], dtype=int)
+
+have_lin_size = len(size_subset_idx) >= 2
+have_quad_size = len(size_subset_idx) >= 3
+if not have_quad_size:
+    print(">>> Warning: fewer than 3 size-isolating trials (beta error = 0) - "
+          "skipping the size-axis quadratic fit")
+
+have_lin_beta = have_beta and len(beta_subset_idx) >= 2
+have_quad_beta = have_beta and len(beta_subset_idx) >= 3
+if have_beta and not have_quad_beta:
+    print(">>> Warning: fewer than 3 beta-isolating trials (size error = 0) - "
+          "skipping the beta-axis quadratic fit")
+
+if args.hyperbolic_fit and len(size_subset_idx) < 3:
+    print("Error: --hyperbolic-fit needs at least 3 size-isolating trials (beta "
+          "error = 0) to fit its 3 free parameters (A, B, C). Aborting...")
     sys.exit(1)
 
-baseline_idx = other_idx = None
-if args.delta_fit:
-    baseline_rows = np.where(np.isclose(x_fwhm, 0.0))[0]
-    if len(baseline_rows) == 0:
-        print("Error: --delta-fit requires a baseline (PSF size error = 0) trial. Aborting...")
-        sys.exit(1)
+# Both errors must be 0 to identify the TRUE baseline - a folder that mixes
+# size-only and beta-only trials has multiple rows with size=0 (every beta
+# trial) and multiple with beta=0 (every size trial), so checking only one
+# would match the wrong row.
+baseline_idx = None
+baseline_rows = np.where(np.isclose(x_fwhm, 0.0) & np.isclose(x_beta, 0.0))[0]
+if len(baseline_rows) > 0:
     baseline_idx = baseline_rows[0]
-    other_idx = [i for i in range(k) if i != baseline_idx]
+
+if args.delta_fit and baseline_idx is None:
+    print("Error: --delta-fit requires a baseline (PSF size error = 0 AND "
+          "PSF beta error = 0) trial. Aborting...")
+    sys.exit(1)
+
+size_other_idx = ([i for i in size_subset_idx if i != baseline_idx]
+                   if baseline_idx is not None else list(size_subset_idx))
+beta_other_idx = ([i for i in beta_subset_idx if i != baseline_idx]
+                   if baseline_idx is not None else list(beta_subset_idx))
 
 ## ++++++++++++++ Optional: delta-T/T_true per trial
 
@@ -384,8 +469,12 @@ if args.psf_dir is not None:
         ## inversion of the model at those fixed B0, C0.
         hyp_B0 = args.t_kernel
         hyp_C0 = T0
+        # T is tied to the size axis (beta trials have no beta-specific PSF
+        # image, so their x_T is degenerate/~0) - restrict to size-isolating
+        # trials for the same reason as the linear/quadratic size fit.
         hyp_A0 = implied_A_estimate(
-            x_T, summary['mean_R'].to_numpy(), fit_weight ** 2, hyp_B0, hyp_C0)
+            x_T[size_subset_idx], summary['mean_R'].to_numpy()[size_subset_idx],
+            fit_weight[size_subset_idx] ** 2, hyp_B0, hyp_C0)
         print(f">>> Hyperbolic fit: initial A estimate = {hyp_A0:.6f} arcsec^2, "
               f"initial B (T_kernel) = {hyp_B0:.6f}, initial C (T_psf) = {hyp_C0:.6f}")
 
@@ -410,12 +499,6 @@ W_mat = np.column_stack([f.loc[common_idx, 'n_objects'].to_numpy() for f in fram
 
 ## ++++++++++++++ Joint bootstrap: one row per iteration
 
-have_lin = k >= 2
-have_quad = k >= 3
-if not have_quad:
-    print(">>> Warning: fewer than 3 trials - skipping the quadratic fit "
-          "(need at least 3 points for a 3-parameter model)")
-
 print(f"\n>>> Running {args.n_resamples} joint bootstrap iterations "
       f"({n_common} cells resampled together per iteration)...")
 
@@ -431,56 +514,101 @@ for b in range(args.n_resamples):
 
     if args.delta_fit:
         # Fit delta R = R - R_baseline directly (through the origin, no
-        # constant term) to the k-1 non-baseline trials of THIS iteration -
-        # rather than deriving it afterward from a fit that also used the
-        # baseline's own noise to help pin down the constant term.
-        delta_b = y_b[other_idx] - y_b[baseline_idx]
-        w_other = fit_weight[other_idx]
+        # constant term) to THIS iteration's own baseline-differenced values
+        # - rather than deriving it afterward from a fit that also used the
+        # baseline's own noise to help pin down the constant term. Computed
+        # once for all k trials, then sliced per axis below (each axis only
+        # uses the trials that isolate it - see the module docstring).
+        delta_b_full = y_b - y_b[baseline_idx]
 
-        if have_lin:
-            (slope,) = weighted_lstsq_through_origin(x_fwhm[other_idx], delta_b, w_other, 1)
+        if have_lin_size:
+            (slope,) = weighted_lstsq_through_origin(
+                x_fwhm[size_other_idx], delta_b_full[size_other_idx],
+                fit_weight[size_other_idx], 1)
             row['lin_fwhm_slope'] = slope
-        if have_quad:
-            c2, c1 = weighted_lstsq_through_origin(x_fwhm[other_idx], delta_b, w_other, 2)
+        if have_quad_size:
+            c2, c1 = weighted_lstsq_through_origin(
+                x_fwhm[size_other_idx], delta_b_full[size_other_idx],
+                fit_weight[size_other_idx], 2)
             row['quad_fwhm_c2'] = c2
             row['quad_fwhm_c1'] = c1
 
         if x_T is not None:
-            if have_lin:
-                (slope,) = weighted_lstsq_through_origin(x_T[other_idx], delta_b, w_other, 1)
+            if have_lin_size:
+                (slope,) = weighted_lstsq_through_origin(
+                    x_T[size_other_idx], delta_b_full[size_other_idx],
+                    fit_weight[size_other_idx], 1)
                 row['lin_T_slope'] = slope
-            if have_quad:
-                c2, c1 = weighted_lstsq_through_origin(x_T[other_idx], delta_b, w_other, 2)
+            if have_quad_size:
+                c2, c1 = weighted_lstsq_through_origin(
+                    x_T[size_other_idx], delta_b_full[size_other_idx],
+                    fit_weight[size_other_idx], 2)
                 row['quad_T_c2'] = c2
                 row['quad_T_c1'] = c1
+
+        if have_lin_beta:
+            (slope,) = weighted_lstsq_through_origin(
+                x_beta[beta_other_idx], delta_b_full[beta_other_idx],
+                fit_weight[beta_other_idx], 1)
+            row['lin_beta_slope'] = slope
+        if have_quad_beta:
+            c2, c1 = weighted_lstsq_through_origin(
+                x_beta[beta_other_idx], delta_b_full[beta_other_idx],
+                fit_weight[beta_other_idx], 2)
+            row['quad_beta_c2'] = c2
+            row['quad_beta_c1'] = c1
     else:
-        if have_lin:
-            slope, intercept = np.polyfit(x_fwhm, y_b, 1, w=fit_weight)
+        if have_lin_size:
+            slope, intercept = np.polyfit(
+                x_fwhm[size_subset_idx], y_b[size_subset_idx], 1,
+                w=fit_weight[size_subset_idx])
             row['lin_fwhm_slope'] = slope
             row['lin_fwhm_intercept'] = intercept
-        if have_quad:
-            c2, c1, c0 = np.polyfit(x_fwhm, y_b, 2, w=fit_weight)
+        if have_quad_size:
+            c2, c1, c0 = np.polyfit(
+                x_fwhm[size_subset_idx], y_b[size_subset_idx], 2,
+                w=fit_weight[size_subset_idx])
             row['quad_fwhm_c2'] = c2
             row['quad_fwhm_c1'] = c1
             row['quad_fwhm_c0'] = c0
 
         if x_T is not None:
-            if have_lin:
-                slope, intercept = np.polyfit(x_T, y_b, 1, w=fit_weight)
+            if have_lin_size:
+                slope, intercept = np.polyfit(
+                    x_T[size_subset_idx], y_b[size_subset_idx], 1,
+                    w=fit_weight[size_subset_idx])
                 row['lin_T_slope'] = slope
                 row['lin_T_intercept'] = intercept
-            if have_quad:
-                c2, c1, c0 = np.polyfit(x_T, y_b, 2, w=fit_weight)
+            if have_quad_size:
+                c2, c1, c0 = np.polyfit(
+                    x_T[size_subset_idx], y_b[size_subset_idx], 2,
+                    w=fit_weight[size_subset_idx])
                 row['quad_T_c2'] = c2
                 row['quad_T_c1'] = c1
                 row['quad_T_c0'] = c0
+
+        if have_lin_beta:
+            slope, intercept = np.polyfit(
+                x_beta[beta_subset_idx], y_b[beta_subset_idx], 1,
+                w=fit_weight[beta_subset_idx])
+            row['lin_beta_slope'] = slope
+            row['lin_beta_intercept'] = intercept
+        if have_quad_beta:
+            c2, c1, c0 = np.polyfit(
+                x_beta[beta_subset_idx], y_b[beta_subset_idx], 2,
+                w=fit_weight[beta_subset_idx])
+            row['quad_beta_c2'] = c2
+            row['quad_beta_c1'] = c1
+            row['quad_beta_c0'] = c0
 
     if args.hyperbolic_fit:
         # Always fits R directly (not a delta-fit variant): A, B, and C all
         # appear in the baseline's own model value too, so none of them
         # cancels out of a difference the way an additive intercept/c0 would.
+        # Restricted to size-isolating trials, same reasoning as the T fit.
         A_fit, B_fit, C_fit = fit_hyperbolic_ABC(
-            x_T, y_b, fit_weight ** 2, hyp_A0, hyp_B0, hyp_C0)
+            x_T[size_subset_idx], y_b[size_subset_idx],
+            fit_weight[size_subset_idx] ** 2, hyp_A0, hyp_B0, hyp_C0)
         row['hyp_T_A'] = A_fit
         row['hyp_T_B'] = B_fit
         row['hyp_T_C'] = C_fit
@@ -495,6 +623,8 @@ for i in range(k):
     boot_df[f'x_fwhm_{i}'] = x_fwhm[i]
     if x_T is not None:
         boot_df[f'x_T_{i}'] = x_T[i]
+    if have_beta:
+        boot_df[f'x_beta_{i}'] = x_beta[i]
     boot_df[f'trial_file_{i}'] = file_order[i]
 
 boot_df.to_feather(args.output_feather)
