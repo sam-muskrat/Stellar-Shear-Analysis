@@ -76,14 +76,23 @@ def compute_R_per_cell(inpath_list):
             print(f">>> Warning: cell {idx} has {n_objects} 'noshear' rows "
                   f"(expected exactly 1 star per cell)")
 
+        # Diagonal terms: response of g1 to an e1 shear, g2 to an e2 shear.
         g1_1p_s = cell.loc[cell['shear_type']=='1p', f'{fit_model}_g_1']
         g1_1m_s = cell.loc[cell['shear_type']=='1m', f'{fit_model}_g_1']
         g2_2p_s = cell.loc[cell['shear_type']=='2p', f'{fit_model}_g_2']
         g2_2m_s = cell.loc[cell['shear_type']=='2m', f'{fit_model}_g_2']
+        # Off-diagonal (cross) terms: response of g1 to an e2 shear, g2 to an
+        # e1 shear - same shear-type rows as above, just the OTHER g component.
+        g1_2p_s = cell.loc[cell['shear_type']=='2p', f'{fit_model}_g_1']
+        g1_2m_s = cell.loc[cell['shear_type']=='2m', f'{fit_model}_g_1']
+        g2_1p_s = cell.loc[cell['shear_type']=='1p', f'{fit_model}_g_2']
+        g2_1m_s = cell.loc[cell['shear_type']=='1m', f'{fit_model}_g_2']
 
         # Skip cells missing any of the four shear types (or noshear, needed for
         # mag_avg) - an empty-slice .mean() returns NaN silently (no exception),
-        # which would otherwise poison R/mag_avg.
+        # which would otherwise poison R/mag_avg. The off-diagonal terms use the
+        # same four shear-type row-groups as the diagonal ones, so this check
+        # already covers them too.
         if min(len(g1_1p_s), len(g1_1m_s), len(g2_2p_s), len(g2_2m_s), n_objects) == 0:
             invalid_cells += 1
             continue
@@ -92,6 +101,8 @@ def compute_R_per_cell(inpath_list):
             # Calculate shear response for each cell
             R11 = (g1_1p_s.mean() - g1_1m_s.mean()) / 0.02
             R22 = (g2_2p_s.mean() - g2_2m_s.mean()) / 0.02
+            R12 = (g1_2p_s.mean() - g1_2m_s.mean()) / 0.02
+            R21 = (g2_1p_s.mean() - g2_1m_s.mean()) / 0.02
 
             mag_avg = (ZERO_POINT - 2.5 * np.log10(noshear[flux_col])).mean()
 
@@ -101,6 +112,8 @@ def compute_R_per_cell(inpath_list):
                 'mag_avg': mag_avg,
                 'R11': R11,
                 'R22': R22,
+                'R12': R12,
+                'R21': R21,
                 'R': (R11 + R22) / 2
             }
             R.append(resp)

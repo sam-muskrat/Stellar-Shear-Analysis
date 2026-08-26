@@ -332,10 +332,10 @@ def summarize_and_plot(trial_idx, x_full, x_label, prefix, title_suffix):
 
     ax_bot.axhline(0, color='black', linewidth=1)
     if lin_resid is not None:
-        suffix = ', matched-pairs vs. baseline' if (is_delta_lin or args.paired) else ''
+        suffix = '' if (is_delta_lin or args.paired) else ''
         ax_bot.errorbar(x[other_idx], lin_resid, yerr=lin_err,
                          fmt='o', capsize=4, color='red', ecolor='red',
-                         label=f'Residual (linear fit{suffix})')
+                         label=f'Residual (bootstrapped{suffix})')
         if lin_dof > 0:
             chi2_lin = np.sum((lin_resid / lin_err) ** 2)
             print(f">>> [{title_suffix}] Linear fit reduced chi^2 (dof={lin_dof}) = "
