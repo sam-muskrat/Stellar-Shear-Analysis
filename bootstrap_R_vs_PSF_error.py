@@ -1,13 +1,11 @@
-### Jointly bootstrap C_calculate_R_cells.py's per-trial output
-### (R_per_cell*.feather) across a folder of PSF-size-error trials - the same
-### underlying idea as I_visualize_R_vs_psf_error.py's --paired-bootstrap:
-### resample the SAME common cell_id subset across all trials in a given
-### iteration, so the shared noise realization these trials share (same
-### stars/image, only the assumed PSF differs - see Run.py) moves coherently
-### instead of being treated as independent per trial.
+### Jointly bootstrap calculate_R_from_cata.py's per-trial output
+### (R_per_cell*.feather) across a folder of PSF-size-error trials: resample
+### the SAME common cell_id subset across all trials in a given iteration, so
+### the shared noise realization these trials share (same stars/image, only
+### the assumed PSF differs - see Run.py) moves coherently instead of being
+### treated as independent per trial.
 ###
-### Unlike I, this doesn't stop at a single point estimate + SE: for EVERY
-### bootstrap iteration, it fits both a linear (R = a + b*x) and a quadratic
+### For EVERY bootstrap iteration, this fits both a linear (R = a + b*x) and a quadratic
 ### (R = a + b*x + c*x^2) model relating shear response to PSF size error,
 ### and does this for x = fractional PSF size error (--PSF_size_error in
 ### Run.py), x = fractional PSF Moffat-beta error (--PSF_beta_error in
@@ -302,7 +300,7 @@ for path in file_list:
 
     R_df = pd.read_feather(path)
 
-    ## Drop cells with NaN R or n_objects - see D_visualize_cell_response.py
+    ## Drop cells with NaN R or n_objects - see plot_response-onetrial.py
     n_before = len(R_df)
     R_df = R_df.dropna(subset=['R', 'n_objects']).reset_index(drop=True)
     n_dropped = n_before - len(R_df)
@@ -314,7 +312,7 @@ for path in file_list:
     if args.mag_min is not None or args.mag_max is not None:
         if 'mag_avg' not in R_df.columns:
             print(f"Error: 'mag_avg' column not found in {path} - rerun "
-                  f"C_calculate_R_cells.py to regenerate it with per-cell magnitudes.")
+                  f"calculate_R_from_cata.py to regenerate it with per-cell magnitudes.")
             sys.exit(1)
         if args.mag_min is not None:
             R_df = R_df[R_df['mag_avg'] >= args.mag_min]
@@ -618,7 +616,8 @@ for b in range(args.n_resamples):
 boot_df = pd.DataFrame(rows)
 
 ## Trial-level constants, repeated on every row so this file is self-contained
-## (L_plot_... doesn't need to re-derive x from the PSF images or refit anything).
+## (plot_R_vs_PSF_size_error.py / plot_R_vs_PSF_beta_error.py don't need to
+## re-derive x from the PSF images or refit anything).
 for i in range(k):
     boot_df[f'x_fwhm_{i}'] = x_fwhm[i]
     if x_T is not None:

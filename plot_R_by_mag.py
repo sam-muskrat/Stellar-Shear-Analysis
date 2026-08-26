@@ -1,17 +1,13 @@
-### Bin C_calculate_R_cells.py's per-cell response by brightness and plot mean R
-### vs. magnitude - a combination of E_calculate_R_flux_bins.py (binning) and
-### F_visualize_R_vs_brightness.py (plotting).
+### Bin calculate_R_from_cata.py's per-cell response by brightness and plot
+### mean R vs. magnitude.
 ###
-### Unlike E, which bins RAW per-row measurements by their own (shear-type-
-### specific) flux before computing R, this bins the per-cell R that
-### C_calculate_R_cells.py already computed from all 5 shear-type rows in that
-### cell. Since a cell's noshear/1p/1m/2p/2m rows stay together through R's
-### calculation, binning happens only after R already exists as one scalar
-### per object - so an object can no longer contribute its shear-type
-### measurements to different bins (see G_diagnose_shear_bin_migration.py for
-### why that mattered for E's approach).
+### Binning happens on the per-cell R that calculate_R_from_cata.py already
+### computed from all 5 shear-type rows in that cell, not on raw per-row
+### measurements - since each cell's noshear/1p/1m/2p/2m rows stay together
+### through R's calculation, binning by the cell's own R afterward can't let
+### an object's shear-type measurements leak into different brightness bins.
 ###
-### Takes only C's output feather (R_per_cell.feather) as input.
+### Takes calculate_R_from_cata.py's output feather (R_per_cell.feather) as input.
 
 import sys
 import argparse
@@ -24,10 +20,10 @@ from scipy.stats import bootstrap
 ## ++++++++++++++ I/O and general setups
 
 parser = argparse.ArgumentParser(
-    description="Bin C_calculate_R_cells.py's per-cell response by brightness "
+    description="Bin calculate_R_from_cata.py's per-cell response by brightness "
                  "and plot mean R vs. magnitude.")
 parser.add_argument('input_feather',
-                     help="Path to C_calculate_R_cells.py's output feather file "
+                     help="Path to calculate_R_from_cata.py's output feather file "
                           "(R_per_cell.feather)")
 parser.add_argument('--n-bins', type=int, default=10,
                      help="Number of brightness bins (equal-count/quantile), default 10")
@@ -40,7 +36,7 @@ parser.add_argument('--mag-max', type=float, default=None,
                           "e.g. to cut out the noisy faint end")
 args = parser.parse_args()
 
-## ++++++++++++++ Load C's per-cell results
+## ++++++++++++++ Load per-cell results
 
 cata = pd.read_feather(args.input_feather)
 print(f">>> Loaded {len(cata)} cell responses from {args.input_feather}")
@@ -49,12 +45,12 @@ required_cols = {'mag_avg', 'n_objects', 'R11', 'R22', 'R'}
 missing = required_cols - set(cata.columns)
 if missing:
     print(f"Error: missing required column(s) {sorted(missing)} - "
-          f"rerun C_calculate_R_cells.py to regenerate this feather file.")
+          f"rerun calculate_R_from_cata.py to regenerate this feather file.")
     sys.exit(1)
 
-## Drop cells with NaN response/magnitude (e.g. cells C already flagged as
-## invalid - shouldn't be present, but guard anyway since a single NaN would
-## silently poison the weighted mean/bootstrap for its whole bin)
+## Drop cells with NaN response/magnitude (e.g. cells already flagged as
+## invalid upstream - shouldn't be present, but guard anyway since a single
+## NaN would silently poison the weighted mean/bootstrap for its whole bin)
 n_before = len(cata)
 cata = cata.dropna(subset=['mag_avg', 'R11', 'R22', 'R']).reset_index(drop=True)
 n_dropped = n_before - len(cata)

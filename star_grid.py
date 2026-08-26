@@ -2,8 +2,8 @@
 """
 Generate a grid of objects with random magnitudes in a square area.
 
-Usage: python generate_grid.py <area> <output_file.feather>
-Example: python generate_grid.py 100.0 objects.feather
+Usage: python star_grid.py <area> <output_file.feather>
+Example: python star_grid.py 100.0 objects.feather
 """
 
 import numpy as np
@@ -34,16 +34,9 @@ def generate_grid_objects(area, output_file):
         output_file (str): Path to output .feather file
     """
     
-    # Calculate side length of the square
     side_length = math.sqrt(area)
-    
-    # Calculate number of objects based on density
     n_objects = int(area * OBJECT_DENSITY)
-    
-    # Calculate grid dimensions (approximate square grid)
-    n_per_side = int(math.sqrt(n_objects))
-    
-    # Calculate tile size (spacing between objects)
+    n_per_side = int(math.sqrt(n_objects))  # approximate square grid
     tile_size = side_length / n_per_side
     
     print(f"Area: {area} square degrees")
@@ -62,13 +55,10 @@ def generate_grid_objects(area, output_file):
     index = 0
     for i in range(n_per_side):
         for j in range(n_per_side):
-            # Center of each tile
-            ra = (i + 0.5) * tile_size
+            ra = (i + 0.5) * tile_size  # tile center
             dec = (j + 0.5) * tile_size
-            
-            # Random magnitude
             r = np.random.uniform(MAG_MIN, MAG_MAX)
-            
+
             indices.append(index)
             ras.append(ra)
             decs.append(dec)
@@ -76,15 +66,12 @@ def generate_grid_objects(area, output_file):
             
             index += 1
     
-    # Create DataFrame
     df = pd.DataFrame({
         'index': indices,
         'ra': ras,
         'dec': decs,
         'r': rs
     })
-    
-    # Save to feather format
     df.to_feather(output_file)
     
     print(f"\nSaved {len(df)} objects to {output_file}")

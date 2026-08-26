@@ -4,13 +4,13 @@ import sys
 import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
-from scipy.stats import norm, laplace, bootstrap
+from scipy.stats import bootstrap
 
 parser = argparse.ArgumentParser(
     description="Plot the stellar shear-response histogram from "
-                 "C_calculate_R_cells.py's output.")
+                 "calculate_R_from_cata.py's output.")
 parser.add_argument('input_file',
-                     help="Path to C_calculate_R_cells.py's output feather file "
+                     help="Path to calculate_R_from_cata.py's output feather file "
                           "(R_per_cell.feather)")
 parser.add_argument('--mag-min', type=float, default=None,
                      help="Drop cells brighter than this (mag_avg < mag-min)")
@@ -32,7 +32,6 @@ args = parser.parse_args()
 
 input_file = args.input_file
 
-# Load the data
 print(f"Loading data from: {input_file}")
 df = pd.read_feather(input_file)
 print(f"Loaded {len(df)} rows and {len(df.columns)} columns")
@@ -55,7 +54,7 @@ if n_dropped > 0:
 if args.mag_min is not None or args.mag_max is not None:
     if 'mag_avg' not in R_df.columns:
         print("Error: 'mag_avg' column not found in this feather file - "
-              "rerun C_calculate_R_cells.py to regenerate R_per_cell.feather "
+              "rerun calculate_R_from_cata.py to regenerate R_per_cell.feather "
               "with per-cell magnitudes.")
         sys.exit(1)
     if args.mag_min is not None:
@@ -143,7 +142,6 @@ if args.components:
     sys.exit(0)
 
 
-# Weighted statistics
 weighted_mean_R = weighted_mean(R_df['R'].to_numpy(), R_df['n_objects'].to_numpy())
 weighted_var = np.average((R_df['R'] - weighted_mean_R)**2, weights=R_df['n_objects'])
 weighted_std = np.sqrt(weighted_var)
@@ -174,74 +172,31 @@ print("Std. Err of Mean:", se)
 print("BCa 95% CI:", res.confidence_interval)
 
 
-# Create histogram
 plt.figure(figsize=(10, 6))
 
-# Plot histogram with density=True for proper scaling with Gaussian
 n, bins, patches = plt.hist(R_df['R'], bins=args.bins, edgecolor='black', alpha=0.7,
                             weights=R_df['n_objects'], label='Observed')
 
-# Calculate mean and std (use weighted mean/std)
 mean_R = weighted_mean_R
 std_R = weighted_std
 
-# Generate Gaussian curve
-#x = np.linspace(R_df['R'].min(), R_df['R'].max(), 100)
-#gaussian = norm.pdf(x, mean_R, std_R) * sum(R_df['n_objects']) * (bins[1] - bins[0])
-#plt.plot(x, gaussian, 'r-', linewidth=2, label=f'Gaussian fit\n(μ={mean_R:.6f}, σ={std_R:.6f})')
-
-# Add Laplace distribution
-#laplace_scale = std_R / np.sqrt(2)  # Convert std to Laplace scale parameter
-#laplace_dist = laplace.pdf(x, loc=mean_R, scale=laplace_scale) * sum(R_df['n_objects']) * (bins[1] - bins[0])
-#plt.plot(x, laplace_dist, 'b-', linewidth=2, label=f'Laplace fit\n(μ={mean_R:.6f}, b={laplace_scale:.6f})')
-
-
-# Add vertical line at mean
 plt.axvline(mean_R, color='red', linestyle='--', linewidth=2, alpha=0.5,
             label=f'Mean = {mean_R:.6f}')
-
-# Add vertical line at zero
 plt.axvline(0, color='green', linestyle='--', linewidth=1,
             label='R = 0 (expected for stars)')
-
-
-# Add shaded region for ±1 sigma
-plt.axvspan(mean_R - se, mean_R + se, alpha=0.2, color='red', 
+plt.axvspan(mean_R - se, mean_R + se, alpha=0.2, color='red',
             label=f'±SE = {se:.6f}')
-
-# Add vertical lines at ±1 sigma
 plt.axvline(mean_R - se, color='orange', linestyle=':', linewidth=1.5, alpha=0.7)
 plt.axvline(mean_R + se, color='orange', linestyle=':', linewidth=1.5, alpha=0.7)
 
-
-
-# Labels and title
 plt.xlabel('Shear Response (R)', fontsize=12)
 plt.ylabel('Number of objects', fontsize=12)
 plt.title(args.title, fontsize=14)
 plt.legend(fontsize=10)
 plt.grid(True, alpha=0.3)
 
-# Save figure
 output_plot = 'shear_response_histogram.png'
 plt.savefig(output_plot, dpi=300, bbox_inches='tight')
 print(f"\nSaved histogram to {output_plot}")
 
-# Also show it
 plt.show()
-
-# Optional: Print outliers
-#threshold = 3 * std_R
-#outliers = R_df[np.abs(R_df['R'] - mean_R) > threshold]
-#if len(outliers) > 0:
-#    print(f"\nFound {len(outliers)} outlier cells (>3σ from mean):")
-#    print(outliers)
-
-
-    # Calculate kurtosis to quantify "peakedness"
-#from scipy.stats import kurtosis
-#kurt = kurtosis(R_df['R'])
-#print(f"\nKurtosis: {kurt:.3f}")
-#print("  > 0: Leptokurtic (more peaked than Gaussian)")
-#print("  = 0: Mesokurtic (same as Gaussian)")
-#print("  < 0: Platykurtic (flatter than Gaussian)")

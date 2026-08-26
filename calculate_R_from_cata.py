@@ -10,7 +10,7 @@ import pandas as pd
 # Gather runtag arg
 if len(sys.argv) < 2:
     print("Error: No runTag provided!")
-    print("Usage: python C_calculate_R_cells.py <runtag>")
+    print("Usage: python calculate_R_from_cata.py <runtag>")
     sys.exit(1)
 
 RUNTAG = sys.argv[1]  # corresponds to folder name

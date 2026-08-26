@@ -1,17 +1,18 @@
-### Read K_bootstrap_R_vs_psf_error_fits.py's per-iteration joint-bootstrap
-### output and summarize + plot it: for each x-variant present in the file
-### (PSF FWHM size error, and delta-T/T_true if K was run with -T), this
-### shows one figure with:
+### Read bootstrap_R_vs_PSF_error.py's per-iteration joint-bootstrap output
+### and summarize + plot it: for each x-variant present in the file (PSF FWHM
+### size error, and delta-T/T_true if bootstrap_R_vs_PSF_error.py was run
+### with -T), this shows one figure with:
+###   - the per-trial means +/- bootstrap SE (top panel)
+###   - the mean linear fit and mean quadratic fit, each with their
+###     bootstrap-derived coefficient standard errors shown on the plot
+###   - residuals from each fit (bottom panel)
 ###
 ### The baseline trial (needed for --paired and delta-fit residuals) is
 ### identified by ALL PSF-error axes being 0 simultaneously (see
 ### GLOBAL_BASELINE_POS), not just this plot's own x-axis - a folder that
 ### mixes size-only and beta-only trials has many rows with x_fwhm=0 (every
-### beta trial), so checking x_fwhm alone would pick the wrong one.
-###   - the per-trial means +/- bootstrap SE (top panel)
-###   - the mean linear fit and mean quadratic fit, each with their
-###     bootstrap-derived coefficient standard errors shown on the plot
-###   - residuals from each fit (bottom panel)
+### beta trial), so checking x_fwhm alone would pick the wrong one. See
+### plot_R_vs_PSF_beta_error.py for the beta-axis counterpart of this plot.
 ###
 ### By default, the residual panel is the naive/standard one: each trial's
 ### bootstrap mean R minus the FIXED (mean-across-iterations) model
@@ -25,12 +26,12 @@
 ### --paired switches to a matched-pairs design instead: for each trial, it
 ### differences that trial's resampled mean R against the baseline (PSF size
 ### error = 0) trial's resampled mean R in the SAME iteration (both already
-### jointly resampled by K), which cancels the shared noise these trials
-### share without needing to fit anything. That matched-pairs residual is
-### then compared to the FIXED model's predicted difference from baseline,
-### with an error bar (delta_se) that's much smaller than the naive SE
-### because it's no longer inflated by the shared component. See
-### I_visualize_R_vs_psf_error.py's --paired-bootstrap for the same idea.
+### jointly resampled by bootstrap_R_vs_PSF_error.py), which cancels the
+### shared noise these trials share without needing to fit anything. That
+### matched-pairs residual is then compared to the FIXED model's predicted
+### difference from baseline, with an error bar (delta_se) that's much
+### smaller than the naive SE because it's no longer inflated by the shared
+### component.
 ###
 ### -q/--quadratic-only and -l/--linear-only (mutually exclusive) restrict
 ### the plot to just one of the two fits, skipping the other's line,
@@ -38,12 +39,12 @@
 ###
 ### --hyperbolic-fit additionally shows the physically-motivated model
 ### R(delta) = 2*(A - delta*C*(1+delta)^2)/(A - delta*C*(1+delta)^2 +
-### B*(1+delta)^2) on the T-axis plot only (delta = x_T), if K was run with
-### --hyperbolic-fit. A (~T_gal), B (~T_kernel), and C (~T_psf) are all free
-### parameters. Unlike the linear/quadratic constant term, none of them
-### cancels out of a --paired difference against baseline (all three enter
-### the baseline's own model value too), so its --paired dof is three less
-### than its naive dof.
+### B*(1+delta)^2) on the T-axis plot only (delta = x_T), if
+### bootstrap_R_vs_PSF_error.py was run with --hyperbolic-fit. A (~T_gal),
+### B (~T_kernel), and C (~T_psf) are all free parameters. Unlike the
+### linear/quadratic constant term, none of them cancels out of a --paired
+### difference against baseline (all three enter the baseline's own model
+### value too), so its --paired dof is three less than its naive dof.
 
 import sys
 import argparse
@@ -55,11 +56,11 @@ import matplotlib.pyplot as plt
 ## ++++++++++++++ I/O and general setups
 
 parser = argparse.ArgumentParser(
-    description="Summarize and plot K_bootstrap_R_vs_psf_error_fits.py's per-iteration "
+    description="Summarize and plot bootstrap_R_vs_PSF_error.py's per-iteration "
                  "bootstrap output: per-trial means/SEs, mean linear+quadratic fits with "
                  "coefficient SEs, and residuals from each fit.")
 parser.add_argument('input_feather',
-                     help="Path to K_bootstrap_R_vs_psf_error_fits.py's output feather file")
+                     help="Path to bootstrap_R_vs_PSF_error.py's output feather file")
 parser.add_argument('--title', type=str, default='Stellar Shear Response (R) vs. PSF Size Error',
                      help="Base title for the plots (the x-variant name is appended)")
 parser.add_argument('--paired', action='store_true',
@@ -74,9 +75,9 @@ fit_group.add_argument('-l', '--linear-only', action='store_true',
                         help="Show only the linear fit (skip quadratic entirely).")
 parser.add_argument('--hyperbolic-fit', action='store_true',
                      help="Also show the hyperbolic fit (R = 2*(A-delta*T_psf)/"
-                          "(A-delta*T_psf+T_kernel)) on the T-axis plot, if K was run with "
-                          "--hyperbolic-fit. Independent of -q/-l (T-axis only; ignored for "
-                          "the FWHM-error plot).")
+                          "(A-delta*T_psf+T_kernel)) on the T-axis plot, if "
+                          "bootstrap_R_vs_PSF_error.py was run with --hyperbolic-fit. "
+                          "Independent of -q/-l (T-axis only; ignored for the FWHM-error plot).")
 args = parser.parse_args()
 
 boot_df = pd.read_feather(args.input_feather)
@@ -88,7 +89,7 @@ n_trials = 0
 while f'mean_R_{n_trials}' in boot_df.columns:
     n_trials += 1
 if n_trials == 0:
-    print("Error: no mean_R_<i> columns found - is this a K_bootstrap_... "
+    print("Error: no mean_R_<i> columns found - is this a bootstrap_R_vs_PSF_error.py "
           "output file? Aborting...")
     sys.exit(1)
 
@@ -136,15 +137,17 @@ def summarize_and_plot(trial_idx, x_full, x_label, prefix, title_suffix):
 
     if args.hyperbolic_fit and prefix == 'T' and not have_hyp:
         print(f">>> [{title_suffix}] --hyperbolic-fit requested but no hyp_T_A column "
-              f"found - was K run with --hyperbolic-fit (and -T)? Skipping that fit.")
+              f"found - was bootstrap_R_vs_PSF_error.py run with --hyperbolic-fit (and -T)? "
+              f"Skipping that fit.")
 
     if not have_lin and not have_quad and not have_hyp:
         print(f">>> No {prefix} fit columns found (or excluded by -q/-l) - "
               f"skipping the {title_suffix} plot")
         return
 
-    # K's --delta-fit stores no constant term (it's always exactly 0 at the
-    # baseline by construction), so its absence is how we detect that mode.
+    # bootstrap_R_vs_PSF_error.py's --delta-fit stores no constant term (it's
+    # always exactly 0 at the baseline by construction), so its absence is
+    # how we detect that mode.
     is_delta_lin = have_lin and f'lin_{prefix}_intercept' not in boot_df.columns
     is_delta_quad = have_quad and f'quad_{prefix}_c0' not in boot_df.columns
 
@@ -288,7 +291,7 @@ def summarize_and_plot(trial_idx, x_full, x_label, prefix, title_suffix):
         def hyp_model(delta, A, B, C):
             # B (~T_kernel) and C (~T_psf) both scale by the same
             # (1+delta)^2 dilation factor as the assumed PSF size - see
-            # K_bootstrap_...'s hyperbolic_model.
+            # bootstrap_R_vs_PSF_error.py's hyperbolic_model.
             T_kernel_eff = B * (1 + delta) ** 2
             T_psf_eff = C * (1 + delta) ** 2
             z = A - delta * T_psf_eff
@@ -373,7 +376,8 @@ def summarize_and_plot(trial_idx, x_full, x_label, prefix, title_suffix):
     plt.show()
 
 
-## ++++++++++++++ FWHM-size-error plot (always present), then T plot (if K was run with -T)
+## ++++++++++++++ FWHM-size-error plot (always present), then T plot (if
+## bootstrap_R_vs_PSF_error.py was run with -T)
 
 summarize_and_plot(fwhm_trial_idx, x_fwhm,
                     r'PSF FWHM Size Error ($\Delta$FWHM / FWHM$_{true}$)',
@@ -385,5 +389,5 @@ if has_T:
     summarize_and_plot(fwhm_trial_idx, x_T, r'$\Delta T / T_{true}$', 'T',
                         r'$\Delta T / T_{true}$')
 else:
-    print(">>> No delta-T/T_true columns found in this file (K was probably run "
-          "without -T/--psf-dir) - skipping the T-based plot.")
+    print(">>> No delta-T/T_true columns found in this file (bootstrap_R_vs_PSF_error.py "
+          "was probably run without -T/--psf-dir) - skipping the T-based plot.")
