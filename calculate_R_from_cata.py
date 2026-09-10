@@ -161,7 +161,7 @@ for psf_dir in sorted(glob.glob(os.path.join(shapes_dir, 'PSF_*error_*'))):
 n_done = 0
 for label, cata_dir in trials:
     inpath_list = glob.glob(os.path.join(cata_dir, '*.feather'))
-    print(f">>> Number of catalogues found in {cata_dir}: {len(inpath_list)} (should be one)")
+    print(f">>> Number of catalogues found in {cata_dir}: {len(inpath_list)}")
     if len(inpath_list) < 1:
         print(f">>> No catalogues found for trial '{label}', skipping.")
         continue
